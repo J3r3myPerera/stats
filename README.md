@@ -2,10 +2,75 @@
 
 <a href="https://github.com/exelban/stats/releases"><p align="center"><img src="https://github.com/exelban/stats/raw/master/Stats/Supporting%20Files/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="120"></p></a>
 
-[![Stats](https://serhiy.s3.eu-central-1.amazonaws.com/Github_repo/stats/menus%3Fv2.3.2.png?v1)](https://github.com/exelban/stats/releases)
-[![Stats](https://serhiy.s3.eu-central-1.amazonaws.com/Github_repo/stats/popups%3Fv2.3.2.png?v3)](https://github.com/exelban/stats/releases)
-
 macOS system monitor in your menu bar
+
+---
+
+## Fork customizations
+
+This is a personal fork of [exelban/stats](https://github.com/exelban/stats) with a redesigned unified popup and dark UI.
+
+### What's different
+
+**Single menu bar icon**
+All active modules are combined into one icon by default (`CombinedModules = true`). Clicking it opens a single unified popup instead of per-module popovers.
+
+**Unified dark popup — `MonitorView`**
+Replaces the original per-module popups with a single dark-themed panel (360 pt wide) containing six tabs:
+
+| Tab | Contents |
+|-----|----------|
+| **CPU** | Line chart (60 samples) + stats grid (User / System / Idle / Cores) + process search + app-icon process list (8 rows) + CPU temperature sensors (color-coded: green / orange / red) |
+| **Memory** | Line chart with GB Y-axis labels + process search + app-icon process list (8 rows) |
+| **Network** | Dual-line chart (upload orange, download blue) + stats grid (Download / Upload / Total Down / Total Up) |
+| **Storage** | Horizontal usage bar + stats grid (Total / Used / Free / Purgeable) |
+| **Battery** | Horizontal level bar + stats grid (Level / Source / Health / Cycles) + secondary grid (Time / Temperature / Voltage / AC Watts) |
+| **Fans** | Fan speed rows with RPM value and proportional progress bar (% of max speed) |
+
+**Design language**
+- Near-black navy background (`#0A0A14`) with dark card surfaces (`#141423`)
+- Text-only pill tab bar — white pill animates to the active tab
+- App icons in the CPU and Memory process lists loaded live from running processes
+- Y-axis GB gridlines on the memory chart (25 / 50 / 75 % of total RAM)
+- CPU temperature color coding: green ≤ 65 °C, orange 66–85 °C, red > 85 °C
+
+**Data routing**
+Module readers post their data via `NotificationCenter` so `MonitorView` can consume them without touching any reader code:
+
+| Notification | Source |
+|---|---|
+| `.monitorCPULoad` | CPU module |
+| `.monitorCPUProcesses` | CPU module |
+| `.monitorRAMUsage` | RAM module |
+| `.monitorRAMProcesses` | RAM module |
+| `.monitorNetUsage` | Network module |
+| `.monitorBatteryUsage` | Battery module |
+| `.monitorSensorsData` | Sensors module (always-on reader, independent of module enabled state) |
+
+The Sensors reader is started unconditionally at launch so fan speeds and CPU temperatures are available even when the Sensors menu bar widget is disabled.
+
+### Building locally
+
+A `run.sh` script at the repo root kills any running instance, builds with ad-hoc signing (no Developer ID certificate required), and launches the app:
+
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+To see full compiler output on a failed build:
+
+```bash
+xcodebuild -project Stats.xcodeproj -scheme Stats -configuration Debug \
+  -derivedDataPath build \
+  CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+```
+
+### Branch
+
+All customizations live on the `feature/monitor-view` branch. `master` tracks upstream.
+
+---
 
 ## Installation
 ### Manual

@@ -18,7 +18,7 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
     private var popup: PopupWindow? = nil
     
     private var status: Bool {
-        Store.shared.bool(key: "CombinedModules", defaultValue: false)
+        Store.shared.bool(key: "CombinedModules", defaultValue: true)
     }
     private var spacing: CGFloat {
         CGFloat(Int(Store.shared.string(key: "CombinedModules_spacing", defaultValue: "")) ?? 0)
@@ -49,7 +49,7 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
             }
         }
         
-        self.popup = PopupWindow(title: "Combined modules", module: .combined, view: Popup()) { _ in }
+        self.popup = PopupWindow(title: "Combined modules", module: .combined, view: MonitorView()) { _ in }
         
         if self.status {
             self.enable()
@@ -117,16 +117,17 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
     
     private func recalculate() {
         self.view.subviews.forEach({ $0.removeFromSuperview() })
-        
+
+        let barModules = self.activeModules.filter { $0.name != "Battery" }
         var w: CGFloat = 0
         var i: Int = 0
-        self.activeModules.forEach { (m: Module) in
+        barModules.forEach { (m: Module) in
             self.view.addSubview(m.menuBar.view)
             self.view.subviews[i].setFrameOrigin(NSPoint(x: w, y: 0))
             w += m.menuBar.view.frame.width + self.spacing
             i += 1
-            
-            if self.separator && i < 2 * self.activeModules.count - 1 {
+
+            if self.separator && i < 2 * barModules.count - 1 {
                 let separator = NSView(frame: NSRect(x: w, y: 3, width: 1, height: Constants.Widget.height-6))
                 separator.wantsLayer = true
                 separator.layer?.backgroundColor = (separator.isDarkMode ? NSColor.white : NSColor.black).cgColor
