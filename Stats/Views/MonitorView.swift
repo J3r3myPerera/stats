@@ -99,6 +99,10 @@ internal class MonitorView: NSView, Popup_p {
     private var lastBat: Battery_Usage?
     private var lastSensors: [Sensor_p] = []
 
+    // Fan control state
+    private var fanRPMLabels:  [Int: NSTextField]     = [:]
+    private var fanDebouncers: [Int: DispatchWorkItem] = [:]
+
     // MARK: Init
 
     init() {
@@ -924,60 +928,164 @@ internal class MonitorView: NSView, Popup_p {
     private func renderSensors(_ sensors: [Sensor_p]) {
         guard let box = senContent else { return }
         box.subviews.forEach { $0.removeFromSuperview() }
+        fanRPMLabels.removeAll()
 
         let w = W - pad * 2
         var y: CGFloat = gap
 
-        // Fan speeds
-        let fans = sensors.compactMap { $0 as? Fan }.filter { $0.value > 0 }
+        let fans = sensors.compactMap { $0 as? Fan }.filter { $0.maxSpeed > 0 }
+        let smcActive = SMCHelper.shared.isActive()
 
         if !fans.isEmpty {
             box.addSubview(sectionHeader("FAN SPEEDS", at: NSPoint(x: pad, y: y)))
             y += 18
 
-            let fanRowH: CGFloat = 46
-            let fanCard = card(w: w, h: CGFloat(fans.count) * fanRowH, at: NSPoint(x: pad, y: y))
+            // Warning banner when SMC Helper is not running
+            if !smcActive {
+                let bannerH: CGFloat = 46
+                let banner = NSView(frame: NSRect(x: pad, y: y, width: w, height: bannerH))
+                banner.wantsLayer = true
+                banner.layer?.backgroundColor = accentOrange.withAlphaComponent(0.12).cgColor
+                banner.layer?.cornerRadius = 10
+                banner.layer?.borderWidth = 0.5
+                banner.layer?.borderColor = accentOrange.withAlphaComponent(0.40).cgColor
 
-            for (i, fan) in fans.enumerated() {
-                let rowY = CGFloat(i) * fanRowH
-                if i > 0 {
-                    let sep = NSView(frame: NSRect(x: 12, y: rowY, width: w - 24, height: 0.5))
-                    sep.wantsLayer = true
-                    sep.layer?.backgroundColor = rowSep.cgColor
-                    fanCard.addSubview(sep)
-                }
+                let icon = lbl("⚠️", size: 13, color: accentOrange)
+                icon.frame = NSRect(x: 12, y: 15, width: 18, height: 16)
+                banner.addSubview(icon)
 
+                let msg = lbl("SMC Helper required for fan control", size: 11, color: accentOrange)
+                msg.frame = NSRect(x: 34, y: 16, width: w - 130, height: 14)
+                banner.addSubview(msg)
+
+                let installBtn = NSButton(frame: NSRect(x: w - 86, y: 11, width: 74, height: 24))
+                installBtn.title         = "Install"
+                installBtn.bezelStyle    = .regularSquare
+                installBtn.isBordered    = false
+                installBtn.wantsLayer    = true
+                installBtn.font          = NSFont.systemFont(ofSize: 11, weight: .semibold)
+                installBtn.alignment     = .center
+                installBtn.focusRingType = .none
+                installBtn.target        = self
+                installBtn.action        = #selector(installSMCHelper)
+                installBtn.layer?.backgroundColor = accentOrange.cgColor
+                installBtn.layer?.cornerRadius    = 7
+                installBtn.contentTintColor       = .white
+                banner.addSubview(installBtn)
+
+                box.addSubview(banner)
+                y += bannerH + gap
+            }
+
+            for fan in fans {
+                let isManual = smcActive && fan.customMode == .forced
+                let cardH: CGFloat = isManual ? 112 : 74
+                let fanCard = card(w: w, h: cardH, at: NSPoint(x: pad, y: y))
+
+                // Name
                 let nameF = lbl(fan.name, size: 12, color: bodyText)
                 nameF.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-                nameF.frame = NSRect(x: 12, y: rowY + 7, width: w - 120, height: 15)
+                nameF.frame = NSRect(x: 12, y: 10, width: w - 130, height: 15)
                 nameF.lineBreakMode = .byTruncatingTail
                 fanCard.addSubview(nameF)
 
-                let rpmF = lbl(fan.formattedValue, size: 13, color: accentBlue)
+                // RPM label — shows custom speed when in manual mode
+                let rpmText: String
+                if isManual, let s = fan.customSpeed { rpmText = "\(s) RPM" }
+                else { rpmText = fan.formattedValue }
+                let barColor = isManual ? accentOrange : accentBlue
+                let rpmF = lbl(rpmText, size: 13, color: barColor)
                 rpmF.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-                rpmF.frame = NSRect(x: w - 106, y: rowY + 7, width: 94, height: 15)
+                rpmF.frame = NSRect(x: w - 106, y: 10, width: 94, height: 15)
                 rpmF.alignment = .right
                 fanCard.addSubview(rpmF)
+                fanRPMLabels[fan.id] = rpmF
 
+                // Progress bar
                 let barW = w - 24
-                let barBG = NSView(frame: NSRect(x: 12, y: rowY + 30, width: barW, height: 6))
+                let barBG = NSView(frame: NSRect(x: 12, y: 32, width: barW, height: 5))
                 barBG.wantsLayer = true
                 barBG.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
-                barBG.layer?.cornerRadius = 3
+                barBG.layer?.cornerRadius = 2.5
                 fanCard.addSubview(barBG)
 
-                let pct = fan.maxSpeed > 0 ? min(CGFloat(fan.value) / CGFloat(fan.maxSpeed), 1.0) : 0
+                let pct = min(CGFloat(fan.value) / CGFloat(fan.maxSpeed), 1.0)
                 if pct > 0 {
-                    let barFill = NSView(frame: NSRect(x: 0, y: 0, width: barW * pct, height: 6))
+                    let barFill = NSView(frame: NSRect(x: 0, y: 0, width: barW * pct, height: 5))
                     barFill.wantsLayer = true
-                    barFill.layer?.backgroundColor = accentBlue.cgColor
-                    barFill.layer?.cornerRadius = 3
+                    barFill.layer?.backgroundColor = barColor.cgColor
+                    barFill.layer?.cornerRadius = 2.5
                     barBG.addSubview(barFill)
                 }
-            }
 
-            box.addSubview(fanCard)
-            y += CGFloat(fans.count) * fanRowH + gap
+                // Auto / Manual toggle
+                let segW: CGFloat = 128
+                let segContainer = NSView(frame: NSRect(x: 12, y: 46, width: segW, height: 22))
+                segContainer.wantsLayer = true
+                segContainer.layer?.cornerRadius = 6
+                segContainer.layer?.borderWidth = 0.5
+                segContainer.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
+                fanCard.addSubview(segContainer)
+
+                let halfW = segW / 2
+                for (idx, title, sel) in [(0, "Auto", #selector(fanAutoTapped(_:))),
+                                          (1, "Manual", #selector(fanManualTapped(_:)))] as [(Int, String, Selector)] {
+                    let btn = NSButton(frame: NSRect(x: CGFloat(idx) * halfW, y: 0, width: halfW, height: 22))
+                    btn.title         = title
+                    btn.bezelStyle    = .regularSquare
+                    btn.isBordered    = false
+                    btn.wantsLayer    = true
+                    btn.font          = NSFont.systemFont(ofSize: 11, weight: .medium)
+                    btn.alignment     = .center
+                    btn.focusRingType = .none
+                    btn.tag           = fan.id
+                    btn.target        = self
+                    btn.action        = sel
+                    let isActive = (idx == 0 && !isManual) || (idx == 1 && isManual)
+                    if isActive {
+                        btn.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
+                        btn.layer?.cornerRadius = 5
+                        btn.contentTintColor = .black
+                    } else {
+                        btn.contentTintColor = mutedText
+                    }
+                    // Disable Manual button when SMC Helper is not running
+                    if idx == 1 && !smcActive {
+                        btn.isEnabled = false
+                        btn.alphaValue = 0.35
+                    }
+                    segContainer.addSubview(btn)
+                }
+
+                // Slider (manual mode only)
+                if isManual {
+                    let minSpeed = max(Int(fan.minSpeed), 1)
+                    let maxSpeed = Int(fan.maxSpeed)
+                    let current  = fan.customSpeed ?? Int(fan.value)
+
+                    let slider = NSSlider(frame: NSRect(x: 12, y: 76, width: w - 24, height: 20))
+                    slider.minValue    = Double(minSpeed)
+                    slider.maxValue    = Double(maxSpeed)
+                    slider.intValue    = Int32(current)
+                    slider.isContinuous = true
+                    slider.tag         = fan.id
+                    slider.target      = self
+                    slider.action      = #selector(fanSliderChanged(_:))
+                    fanCard.addSubview(slider)
+
+                    let minL = lbl("\(minSpeed) RPM", size: 9, color: mutedText)
+                    minL.frame = NSRect(x: 12, y: 98, width: 60, height: 11)
+                    fanCard.addSubview(minL)
+
+                    let maxL = lbl("\(maxSpeed) RPM", size: 9, color: mutedText)
+                    maxL.frame = NSRect(x: w - 60, y: 98, width: 48, height: 11)
+                    maxL.alignment = .right
+                    fanCard.addSubview(maxL)
+                }
+
+                box.addSubview(fanCard)
+                y += cardH + 4
+            }
         } else {
             let noData = lbl("No fan data available", size: 13, color: mutedText)
             noData.frame = NSRect(x: pad, y: y + 8, width: w, height: 20)
@@ -987,9 +1095,43 @@ internal class MonitorView: NSView, Popup_p {
         }
 
         box.setFrameSize(NSSize(width: W, height: y + pad))
+        if activeTab == .fans { recalculate() }
+    }
 
-        if activeTab == .fans {
-            recalculate()
+    @objc private func installSMCHelper() {
+        SMCHelper.shared.install { [weak self] status in
+            DispatchQueue.main.async {
+                self?.renderSensors(self?.lastSensors ?? [])
+            }
         }
+    }
+
+    @objc private func fanAutoTapped(_ sender: NSButton) {
+        let id = sender.tag
+        Store.shared.set(key: "fan_\(id)_mode", value: 0)   // FanMode.automatic
+        Store.shared.remove("fan_\(id)_speed")
+        SMCHelper.shared.setFanMode(id, mode: 0)
+        renderSensors(lastSensors)
+    }
+
+    @objc private func fanManualTapped(_ sender: NSButton) {
+        let id = sender.tag
+        Store.shared.set(key: "fan_\(id)_mode", value: 1)   // FanMode.forced
+        SMCHelper.shared.setFanMode(id, mode: 1)
+        renderSensors(lastSensors)
+    }
+
+    @objc private func fanSliderChanged(_ sender: NSSlider) {
+        let id    = sender.tag
+        let speed = Int(sender.intValue)
+        Store.shared.set(key: "fan_\(id)_speed", value: speed)
+        fanRPMLabels[id]?.stringValue = "\(speed) RPM"
+
+        fanDebouncers[id]?.cancel()
+        let task = DispatchWorkItem {
+            SMCHelper.shared.setFanSpeed(id, speed: speed)
+        }
+        fanDebouncers[id] = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: task)
     }
 }
